@@ -35,7 +35,11 @@ static int PthreadCall(const char* label, int result) {
   return result;
 }
 
-Mutex::Mutex(bool adaptive) {
+MutexBase::~MutexBase() {}
+RWMutexBase::~RWMutexBase() {}
+CondVarBase::~CondVarBase() {}
+
+PosixMutex::PosixMutex(bool adaptive) {
 #ifdef ROCKSDB_PTHREAD_ADAPTIVE_MUTEX
   if (!adaptive) {
     PthreadCall("init mutex", pthread_mutex_init(&mu_, nullptr));
@@ -54,36 +58,36 @@ Mutex::Mutex(bool adaptive) {
 #endif // ROCKSDB_PTHREAD_ADAPTIVE_MUTEX
 }
 
-Mutex::~Mutex() { PthreadCall("destroy mutex", pthread_mutex_destroy(&mu_)); }
+PosixMutex::~PosixMutex() { PthreadCall("destroy mutex", pthread_mutex_destroy(&mu_)); }
 
-void Mutex::Lock() {
+void PosixMutex::Lock() {
   PthreadCall("lock", pthread_mutex_lock(&mu_));
 #ifndef NDEBUG
   locked_ = true;
 #endif
 }
 
-void Mutex::Unlock() {
+void PosixMutex::Unlock() {
 #ifndef NDEBUG
   locked_ = false;
 #endif
   PthreadCall("unlock", pthread_mutex_unlock(&mu_));
 }
 
-void Mutex::AssertHeld() {
+void PosixMutex::AssertHeld() {
 #ifndef NDEBUG
   assert(locked_);
 #endif
 }
 
-CondVar::CondVar(Mutex* mu)
+PosixCondVar::PosixCondVar(PosixMutex* mu)
     : mu_(mu) {
     PthreadCall("init cv", pthread_cond_init(&cv_, nullptr));
 }
 
-CondVar::~CondVar() { PthreadCall("destroy cv", pthread_cond_destroy(&cv_)); }
+PosixCondVar::~PosixCondVar() { PthreadCall("destroy cv", pthread_cond_destroy(&cv_)); }
 
-void CondVar::Wait() {
+void PosixCondVar::Wait() {
 #ifndef NDEBUG
   mu_->locked_ = false;
 #endif
@@ -93,7 +97,7 @@ void CondVar::Wait() {
 #endif
 }
 
-bool CondVar::TimedWait(uint64_t abs_time_us) {
+bool PosixCondVar::TimedWait(uint64_t abs_time_us) {
   struct timespec ts;
   ts.tv_sec = static_cast<time_t>(abs_time_us / 1000000);
   ts.tv_nsec = static_cast<suseconds_t>((abs_time_us % 1000000) * 1000);
@@ -114,27 +118,49 @@ bool CondVar::TimedWait(uint64_t abs_time_us) {
   return false;
 }
 
-void CondVar::Signal() {
+void PosixCondVar::Signal() {
   PthreadCall("signal", pthread_cond_signal(&cv_));
 }
 
-void CondVar::SignalAll() {
+void PosixCondVar::SignalAll() {
   PthreadCall("broadcast", pthread_cond_broadcast(&cv_));
 }
 
-RWMutex::RWMutex() {
+PosixRWMutex::PosixRWMutex() {
   PthreadCall("init mutex", pthread_rwlock_init(&mu_, nullptr));
 }
 
-RWMutex::~RWMutex() { PthreadCall("destroy mutex", pthread_rwlock_destroy(&mu_)); }
+PosixRWMutex::~PosixRWMutex() { PthreadCall("destroy mutex", pthread_rwlock_destroy(&mu_)); }
 
-void RWMutex::ReadLock() { PthreadCall("read lock", pthread_rwlock_rdlock(&mu_)); }
+void PosixRWMutex::ReadLock() { PthreadCall("read lock", pthread_rwlock_rdlock(&mu_)); }
 
-void RWMutex::WriteLock() { PthreadCall("write lock", pthread_rwlock_wrlock(&mu_)); }
+void PosixRWMutex::WriteLock() { PthreadCall("write lock", pthread_rwlock_wrlock(&mu_)); }
 
-void RWMutex::ReadUnlock() { PthreadCall("read unlock", pthread_rwlock_unlock(&mu_)); }
+void PosixRWMutex::ReadUnlock() { PthreadCall("read unlock", pthread_rwlock_unlock(&mu_)); }
 
-void RWMutex::WriteUnlock() { PthreadCall("write unlock", pthread_rwlock_unlock(&mu_)); }
+void PosixRWMutex::WriteUnlock() { PthreadCall("write unlock", pthread_rwlock_unlock(&mu_)); }
+
+namespace {
+
+MutexBase* createPosixMutex(bool adaptive)
+{
+  return new PosixMutex(adaptive);
+}
+
+CondVarBase* createPosixCondVar(Mutex* mu) {
+  PosixMutex* m = static_cast<PosixMutex*>(mu->GetImpl());
+  return new PosixCondVar(m);
+}
+
+RWMutexBase* createPosixRWMutex() {
+  return new PosixRWMutex();
+}
+
+}
+MutexBase* (*createMutex)(bool) = &createPosixMutex;
+RWMutexBase* (*createRWMutex)() = &createPosixRWMutex;
+CondVarBase* (*createCondVarBase)(Mutex*) = &createPosixCondVar;
+
 
 int PhysicalCoreID() {
 #if defined(ROCKSDB_SCHED_GETCPU_PRESENT) && defined(__x86_64__) && \

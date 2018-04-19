@@ -56,6 +56,8 @@
 #include <limits>
 #include <string>
 
+#include <rocksdb/port.h>
+
 #ifndef PLATFORM_IS_LITTLE_ENDIAN
 #define PLATFORM_IS_LITTLE_ENDIAN (__BYTE_ORDER == __LITTLE_ENDIAN)
 #endif
@@ -94,9 +96,9 @@ const size_t kMaxSizet = std::numeric_limits<size_t>::max();
 static const bool kLittleEndian = PLATFORM_IS_LITTLE_ENDIAN;
 #undef PLATFORM_IS_LITTLE_ENDIAN
 
-class CondVar;
+class PosixCondVar;
 
-class Mutex {
+class PosixMutex : public MutexBase {
  public:
 // We want to give users opportunity to default all the mutexes to adaptive if
 // not specified otherwise. This enables a quick way to conduct various
@@ -107,53 +109,52 @@ class Mutex {
 // build environment then this happens automatically; otherwise it's up to the
 // consumer to define the identifier.
 #ifdef ROCKSDB_DEFAULT_TO_ADAPTIVE_MUTEX
-  explicit Mutex(bool adaptive = true);
+  explicit PosixMutex(bool adaptive = true);
 #else
-  explicit Mutex(bool adaptive = false);
+  explicit PosixMutex(bool adaptive = false);
 #endif
-  ~Mutex();
+  ~PosixMutex();
 
-  void Lock();
-  void Unlock();
+  void Lock() override;
+  void Unlock() override;
   // this will assert if the mutex is not locked
   // it does NOT verify that mutex is held by a calling thread
-  void AssertHeld();
+  void AssertHeld() override;
 
  private:
-  friend class CondVar;
+  friend class PosixCondVar;
   pthread_mutex_t mu_;
 #ifndef NDEBUG
   bool locked_;
 #endif
 
   // No copying
-  Mutex(const Mutex&);
-  void operator=(const Mutex&);
+  PosixMutex(const PosixMutex&);
+  void operator=(const PosixMutex&);
 };
 
-class RWMutex {
+class PosixRWMutex : public RWMutexBase {
  public:
-  RWMutex();
-  ~RWMutex();
+  PosixRWMutex();
+  ~PosixRWMutex();
 
   void ReadLock();
   void WriteLock();
   void ReadUnlock();
   void WriteUnlock();
-  void AssertHeld() { }
 
  private:
   pthread_rwlock_t mu_; // the underlying platform mutex
 
   // No copying allowed
-  RWMutex(const RWMutex&);
-  void operator=(const RWMutex&);
+  PosixRWMutex(const PosixRWMutex&);
+  void operator=(const PosixRWMutex&);
 };
 
-class CondVar {
+class PosixCondVar : public CondVarBase {
  public:
-  explicit CondVar(Mutex* mu);
-  ~CondVar();
+  explicit PosixCondVar(PosixMutex* mu);
+  ~PosixCondVar();
   void Wait();
   // Timed condition wait.  Returns true if timeout occurred.
   bool TimedWait(uint64_t abs_time_us);
@@ -161,7 +162,7 @@ class CondVar {
   void SignalAll();
  private:
   pthread_cond_t cv_;
-  Mutex* mu_;
+  PosixMutex* mu_;
 };
 
 using Thread = std::thread;

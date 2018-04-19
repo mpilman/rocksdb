@@ -10,6 +10,7 @@
 #pragma once
 
 #include <string>
+#include <rocksdb/port.h>
 
 // Include the appropriate platform specific file below.  If you are
 // porting to a new platform, see "port_example.h" for documentation
